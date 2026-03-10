@@ -106,3 +106,5 @@ nonebot.load_plugin("nonebot_plugin_ff14bot_bridge")
 - 配置日志采集并监控 401/429/503
 
 详见 [docs/DEPLOY_ZH.md](./docs/DEPLOY_ZH.md)。
+
+此插件纯Vibe产物，请注意使用。

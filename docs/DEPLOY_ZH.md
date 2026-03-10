@@ -107,3 +107,5 @@ curl -i -X POST https://nb.example.com/ff14/bridge/ingest -d '{}'
 - 定期轮换 Secret
 - 监控 401、429、503 比例
 - 建议仅允许 Nginx 暴露公网，NoneBot 监听本地回环或内网
+
+此插件纯Vibe产物，请注意使用。
