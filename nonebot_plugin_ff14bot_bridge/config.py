@@ -1,0 +1,22 @@
+from pydantic import BaseModel, Field
+
+
+class Config(BaseModel):
+    ff14_bridge_enabled: bool = Field(default=True)
+
+    # Legacy single-client fields. They are kept for migration compatibility.
+    ff14_bridge_key: str = Field(default="xsztoolbox")
+    ff14_bridge_secret: str = Field(default="")
+    ff14_bridge_target_type: str = Field(default="group")
+    ff14_bridge_target_id: str = Field(default="")
+
+    # Multi-tenant storage.
+    ff14_bridge_clients_file: str = Field(default="data/ff14_bridge/clients.json")
+    ff14_bridge_allow_self_register: bool = Field(default=True)
+    ff14_bridge_admin_users: str = Field(default="")
+    ff14_bridge_public_endpoint: str = Field(default="")
+
+    # Validation / anti-abuse.
+    ff14_bridge_time_window_seconds: int = Field(default=60)
+    ff14_bridge_dedup_ttl_seconds: int = Field(default=300)
+    ff14_bridge_rate_limit_per_minute: int = Field(default=120)

@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nonebot-plugin-ff14bot-bridge"
+version = "0.1.0"
+description = "FF14 local chat bridge plugin for NoneBot2 with multi-tenant key management"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+  { name = "XSZToolbox Contributors" }
+]
+dependencies = [
+  "nonebot2>=2.3.0",
+  "nonebot-adapter-onebot>=2.4.0",
+  "pydantic>=1.10,<3"
+]
+keywords = ["nonebot", "ff14", "bridge", "chat", "onebot"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Framework :: AsyncIO",
+  "Topic :: Communications :: Chat"
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/nonebot-plugin-ff14bot-bridge"
+Repository = "https://github.com/your-org/nonebot-plugin-ff14bot-bridge"
+Documentation = "https://github.com/your-org/nonebot-plugin-ff14bot-bridge/blob/main/docs/DEPLOY_ZH.md"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nonebot_plugin_ff14bot_bridge*"]
+
