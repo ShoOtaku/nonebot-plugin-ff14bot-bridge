@@ -26,9 +26,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/nonebot-plugin-ff14bot-bridge"
-Repository = "https://github.com/your-org/nonebot-plugin-ff14bot-bridge"
-Documentation = "https://github.com/your-org/nonebot-plugin-ff14bot-bridge/blob/main/docs/DEPLOY_ZH.md"
+Homepage = "https://github.com/ShoOtaku/nonebot-plugin-ff14bot-bridge"
+Repository = "https://github.com/ShoOtaku/nonebot-plugin-ff14bot-bridge"
+Documentation = "https://github.com/ShoOtaku/nonebot-plugin-ff14bot-bridge/blob/main/docs/DEPLOY_ZH.md"
 
 [tool.setuptools]
 include-package-data = true
@@ -36,4 +36,3 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["nonebot_plugin_ff14bot_bridge*"]
-
