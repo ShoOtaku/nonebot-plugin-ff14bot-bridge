@@ -6,6 +6,7 @@ import hmac
 import json
 import secrets
 import time
+import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,14 +49,26 @@ class BridgeStats:
     registered_clients: int = 0
 
 
+@dataclass
+class DownlinkMessage:
+    message_id: str
+    content: str
+    created_at: float
+    expire_at: float
+    sender_user_id: str = ""
+
+
 class FF14BridgeService:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.stats = BridgeStats()
         self._dedup_cache: Dict[str, float] = {}
         self._rate_cache: Dict[str, Deque[float]] = defaultdict(deque)
+        self._pull_rate_cache: Dict[str, Deque[float]] = defaultdict(deque)
+        self._downlink_queues: Dict[str, Deque[DownlinkMessage]] = defaultdict(deque)
         self._lock = asyncio.Lock()
         self._clients_lock = asyncio.Lock()
+        self._downlink_lock = asyncio.Lock()
 
         self._clients_path = Path((config.ff14_bridge_clients_file or "data/ff14_bridge/clients.json").strip())
         self._clients_by_key: Dict[str, BridgeClient] = {}
@@ -207,6 +220,12 @@ class FF14BridgeService:
         if endpoint:
             return endpoint
         return "http://127.0.0.1:8080/ff14/bridge/ingest"
+
+    def get_public_pull_endpoint(self) -> str:
+        ingest = self.get_public_endpoint()
+        if ingest.endswith("/ff14/bridge/ingest"):
+            return ingest[: -len("/ff14/bridge/ingest")] + "/ff14/bridge/pull"
+        return ingest.rstrip("/") + "/ff14/bridge/pull"
 
     def get_client_by_key(self, bridge_key: str) -> Optional[BridgeClient]:
         key = (bridge_key or "").strip()
@@ -369,6 +388,130 @@ class FF14BridgeService:
             queue.append(now)
             return True
 
+    async def check_pull_rate_limit(self, bridge_key: str, source_ip: str) -> bool:
+        now = time.time()
+        key = f"{bridge_key}:{source_ip}"
+        limit = max(self.config.ff14_bridge_pull_rate_limit_per_minute, 1)
+        window_seconds = 60.0
+
+        async with self._lock:
+            queue = self._pull_rate_cache[key]
+            while queue and now - queue[0] > window_seconds:
+                queue.popleft()
+            if len(queue) >= limit:
+                return False
+            queue.append(now)
+            return True
+
+    @staticmethod
+    def _trim_text(text: str) -> str:
+        # 聊天下发不需要保留换行，避免游戏端输入污染。
+        return " ".join((text or "").strip().splitlines()).strip()
+
+    def _normalize_downlink_text(self, text: str) -> str:
+        normalized = self._trim_text(text)
+        max_length = max(self.config.ff14_bridge_downlink_max_length, 1)
+        if len(normalized) > max_length:
+            normalized = normalized[:max_length]
+        return normalized
+
+    async def enqueue_user_downlink(self, user_id: str, text: str) -> Tuple[bool, str, Optional[BridgeClient]]:
+        owner = str(user_id).strip()
+        if not owner:
+            return False, "invalid_user", None
+
+        client = self.get_user_client(owner)
+        if client is None:
+            return False, "no_registered_client", None
+        if not client.enabled:
+            return False, "client_disabled", client
+
+        normalized = self._normalize_downlink_text(text)
+        if not normalized:
+            return False, "empty_message", client
+
+        await self.enqueue_downlink_for_client(client.bridge_key, normalized, owner)
+        return True, "ok", client
+
+    async def enqueue_downlink_for_client(self, bridge_key: str, text: str, sender_user_id: str = "") -> bool:
+        key = str(bridge_key or "").strip()
+        if not key:
+            return False
+
+        now = time.time()
+        ttl_seconds = max(self.config.ff14_bridge_downlink_ttl_seconds, 1)
+        queue_size = max(self.config.ff14_bridge_downlink_queue_size, 1)
+        normalized = self._normalize_downlink_text(text)
+        if not normalized:
+            return False
+
+        item = DownlinkMessage(
+            message_id=uuid.uuid4().hex,
+            content=normalized,
+            created_at=now,
+            expire_at=now + ttl_seconds,
+            sender_user_id=str(sender_user_id or "").strip(),
+        )
+
+        async with self._downlink_lock:
+            queue = self._downlink_queues[key]
+            self._cleanup_downlink_queue_locked(queue, now)
+            queue.append(item)
+            while len(queue) > queue_size:
+                queue.popleft()
+            return True
+
+    async def dequeue_downlink(self, bridge_key: str, limit: int) -> list[dict]:
+        key = str(bridge_key or "").strip()
+        if not key:
+            return []
+
+        safe_limit = min(max(int(limit), 1), 20)
+        now = time.time()
+        results: list[dict] = []
+
+        async with self._downlink_lock:
+            queue = self._downlink_queues[key]
+            self._cleanup_downlink_queue_locked(queue, now)
+            while queue and len(results) < safe_limit:
+                item = queue.popleft()
+                results.append(
+                    {
+                        "message_id": item.message_id,
+                        "content": item.content,
+                        "created_at": item.created_at,
+                        "sender_user_id": item.sender_user_id,
+                    }
+                )
+            if not queue:
+                self._downlink_queues.pop(key, None)
+
+        return results
+
+    async def get_user_downlink_queue_size(self, user_id: str) -> int:
+        owner = str(user_id).strip()
+        if not owner:
+            return 0
+        client = self.get_user_client(owner)
+        if client is None:
+            return 0
+        return await self.get_bridge_downlink_queue_size(client.bridge_key)
+
+    async def get_bridge_downlink_queue_size(self, bridge_key: str) -> int:
+        key = str(bridge_key or "").strip()
+        if not key:
+            return 0
+        now = time.time()
+        async with self._downlink_lock:
+            queue = self._downlink_queues.get(key)
+            if queue is None:
+                return 0
+            self._cleanup_downlink_queue_locked(queue, now)
+            if not queue:
+                self._downlink_queues.pop(key, None)
+                return 0
+            return len(queue)
+
     def format_message(self, payload: IngestPayload) -> str:
         sent_at = payload.sent_at or time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         return (
@@ -425,3 +568,8 @@ class FF14BridgeService:
         expired = [event_id for event_id, ts in self._dedup_cache.items() if now - ts > ttl]
         for event_id in expired:
             self._dedup_cache.pop(event_id, None)
+
+    @staticmethod
+    def _cleanup_downlink_queue_locked(queue: Deque[DownlinkMessage], now: float) -> None:
+        while queue and queue[0].expire_at <= now:
+            queue.popleft()

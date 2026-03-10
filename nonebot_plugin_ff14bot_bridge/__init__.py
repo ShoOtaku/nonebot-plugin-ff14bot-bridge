@@ -7,7 +7,7 @@ from nonebot import get_driver, logger, on_command
 from nonebot.adapters import Event, Message
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from .config import Config
 from .service import FF14BridgeService, IngestPayload
@@ -21,10 +21,15 @@ __plugin_meta__ = PluginMetadata(
         "/ff14bot show\n"
         "/ff14bot rotate\n"
         "/ff14bot enable|disable\n"
-        "/ff14bot status"
+        "/ff14bot status\n"
+        "/ff14bot send <消息>"
     ),
     type="application",
 )
+
+
+class PullRequest(BaseModel):
+    limit: int = Field(default=5, ge=1, le=20)
 
 
 def _load_config() -> Config:
@@ -106,6 +111,51 @@ async def ingest_bridge_message(
     return {"ok": True, "accepted": True, "deduplicated": False, "message": "queued"}
 
 
+@router.post("/ff14/bridge/pull")
+async def pull_bridge_command(
+    request: Request,
+    x_bridge_key: str = Header(default=""),
+    x_bridge_timestamp: str = Header(default=""),
+    x_bridge_signature: str = Header(default=""),
+) -> dict:
+    if not plugin_config.ff14_bridge_enabled:
+        raise HTTPException(status_code=503, detail="bridge_disabled")
+
+    raw_body = await request.body()
+    if not raw_body:
+        raw_body = b"{}"
+
+    bridge_client = service.get_client_by_key(x_bridge_key)
+    if bridge_client is None:
+        service.mark_rejected("invalid_key")
+        raise HTTPException(status_code=401, detail="invalid_key")
+
+    if not service.check_timestamp(x_bridge_timestamp):
+        service.mark_rejected("invalid_timestamp")
+        raise HTTPException(status_code=401, detail="invalid_timestamp")
+
+    if not service.verify_signature(raw_body, x_bridge_timestamp, x_bridge_signature, bridge_client.secret):
+        service.mark_rejected("invalid_signature")
+        raise HTTPException(status_code=401, detail="invalid_signature")
+
+    try:
+        if hasattr(PullRequest, "model_validate_json"):
+            pull_request = PullRequest.model_validate_json(raw_body)
+        else:
+            pull_request = PullRequest.parse_raw(raw_body)
+    except ValidationError:
+        service.mark_rejected("invalid_pull_payload")
+        raise HTTPException(status_code=400, detail="invalid_pull_payload")
+
+    source_ip = request.client.host if request.client else "unknown"
+    if not await service.check_pull_rate_limit(bridge_client.bridge_key, source_ip):
+        service.mark_rejected("pull_rate_limited")
+        raise HTTPException(status_code=429, detail="pull_rate_limited")
+
+    messages = await service.dequeue_downlink(bridge_client.bridge_key, pull_request.limit)
+    return {"ok": True, "count": len(messages), "messages": messages}
+
+
 driver = get_driver()
 server_app = getattr(driver, "server_app", None)
 if server_app is not None:
@@ -141,6 +191,7 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
                     "ff14bot disable   - 禁用个人桥接",
                     "ff14bot unregister- 注销个人桥接",
                     "ff14bot status    - 查看桥接状态",
+                    "ff14bot send xxx  - 下发消息到游戏",
                 ]
             )
         )
@@ -148,6 +199,7 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
     if action in {"status", "状态"}:
         stats = service.snapshot()
         own_client = service.get_user_client(user_id)
+        own_queue_size = await service.get_user_downlink_queue_size(user_id)
         lines = [
             "[ff14bot] 状态",
             f"accepted: {stats.accepted}",
@@ -165,6 +217,7 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
                     f"bridge_key: {own_client.bridge_key}",
                     f"enabled: {own_client.enabled}",
                     f"target: {own_client.target_type}:{own_client.target_id}",
+                    f"downlink_queue_size: {own_queue_size}",
                 ]
             )
         else:
@@ -182,6 +235,7 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
                 [
                     f"[ff14bot] {action_text}",
                     f"Endpoint: {service.get_public_endpoint()}",
+                    f"Pull Endpoint: {service.get_public_pull_endpoint()}",
                     f"Bridge Key: {client.bridge_key}",
                     f"Bridge Secret: {client.secret}",
                     f"Target: {client.target_type}:{client.target_id}",
@@ -199,6 +253,7 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
                 [
                     "[ff14bot] 你的桥接凭证",
                     f"Endpoint: {service.get_public_endpoint()}",
+                    f"Pull Endpoint: {service.get_public_pull_endpoint()}",
                     f"Bridge Key: {client.bridge_key}",
                     f"Bridge Secret: {client.secret}",
                     f"Enabled: {client.enabled}",
@@ -216,12 +271,31 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
                 [
                     "[ff14bot] 已轮换密钥",
                     f"Endpoint: {service.get_public_endpoint()}",
+                    f"Pull Endpoint: {service.get_public_pull_endpoint()}",
                     f"Bridge Key: {client.bridge_key}",
                     f"Bridge Secret: {client.secret}",
                     "请立即更新卫月端配置。",
                 ]
             )
         )
+
+    if action in {"send", "发送"}:
+        message_text = plain[len(tokens[0]):].strip() if tokens else ""
+        if not message_text:
+            await ff14bot_command.finish("[ff14bot] 用法: ff14bot send 你好世界")
+
+        success, reason, client = await service.enqueue_user_downlink(user_id, message_text)
+        if not success:
+            if reason == "no_registered_client":
+                await ff14bot_command.finish("[ff14bot] 你还没有桥接凭证，请先执行 ff14bot register。")
+            if reason == "client_disabled":
+                await ff14bot_command.finish("[ff14bot] 你的桥接已禁用，请先执行 ff14bot enable。")
+            if reason == "empty_message":
+                await ff14bot_command.finish("[ff14bot] 消息为空，请重新输入。")
+            await ff14bot_command.finish("[ff14bot] 下发失败，请稍后重试。")
+
+        queue_size = await service.get_bridge_downlink_queue_size(client.bridge_key if client else "")
+        await ff14bot_command.finish(f"[ff14bot] 已入队，等待游戏端拉取。当前排队: {queue_size}")
 
     if action in {"enable", "启用"}:
         client = await service.set_user_enabled(user_id, True)

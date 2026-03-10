@@ -40,6 +40,10 @@ FF14_BRIDGE_ADMIN_USERS=10001,10002
 - `FF14_BRIDGE_TIME_WINDOW_SECONDS`：时间窗，默认 60
 - `FF14_BRIDGE_DEDUP_TTL_SECONDS`：去重缓存 TTL，默认 300
 - `FF14_BRIDGE_RATE_LIMIT_PER_MINUTE`：每 Key 每分钟限流，默认 120
+- `FF14_BRIDGE_DOWNLINK_QUEUE_SIZE`：下行队列长度，默认 100
+- `FF14_BRIDGE_DOWNLINK_TTL_SECONDS`：下行消息保留秒数，默认 300
+- `FF14_BRIDGE_DOWNLINK_MAX_LENGTH`：下行单条最大长度，默认 180
+- `FF14_BRIDGE_PULL_RATE_LIMIT_PER_MINUTE`：每 Key 每分钟 pull 限流，默认 240
 
 ## 4. Nginx 反代（HTTPS）
 
@@ -86,6 +90,7 @@ curl -i -X POST https://nb.example.com/ff14/bridge/ingest -d '{}'
    - Bridge Secret
 3. 用户将这些值填入游戏端桥接配置
 4. 游戏内触发消息后，机器人将收到并转发
+5. QQ 输入 `ff14bot send 你好`，消息会进入下行队列并在游戏端轮询时发送
 
 ## 6. 运维命令
 
@@ -93,6 +98,7 @@ curl -i -X POST https://nb.example.com/ff14/bridge/ingest -d '{}'
 - `ff14bot rotate`：轮换当前用户 secret
 - `ff14bot disable`：禁用当前用户桥接
 - `ff14bot enable`：重新启用
+- `ff14bot send <消息>`：下发到游戏
 - `ff14bot list`：管理员查看全部客户端
 
 ## 7. 安全建议
@@ -101,4 +107,3 @@ curl -i -X POST https://nb.example.com/ff14/bridge/ingest -d '{}'
 - 定期轮换 Secret
 - 监控 401、429、503 比例
 - 建议仅允许 Nginx 暴露公网，NoneBot 监听本地回环或内网
-

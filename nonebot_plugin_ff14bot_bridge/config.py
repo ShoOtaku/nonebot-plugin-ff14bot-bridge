@@ -20,3 +20,9 @@ class Config(BaseModel):
     ff14_bridge_time_window_seconds: int = Field(default=60)
     ff14_bridge_dedup_ttl_seconds: int = Field(default=300)
     ff14_bridge_rate_limit_per_minute: int = Field(default=120)
+
+    # QQ -> 游戏下行队列配置。
+    ff14_bridge_downlink_queue_size: int = Field(default=100)
+    ff14_bridge_downlink_ttl_seconds: int = Field(default=300)
+    ff14_bridge_downlink_max_length: int = Field(default=180)
+    ff14_bridge_pull_rate_limit_per_minute: int = Field(default=240)
