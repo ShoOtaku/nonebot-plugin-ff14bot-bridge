@@ -3,6 +3,11 @@
 FF14 本地聊天桥接插件（NoneBot2），支持多用户独立密钥管理。  
 用户通过私聊机器人执行 `ff14bot` 命令注册自己的 `Bridge Key/Secret`，游戏端按个人凭证上报聊天消息。
 
+## 相关链接
+
+- NoneBot 官方文档：https://nonebot.dev/docs/
+- 插件部署文档：[docs/DEPLOY_ZH.md](./docs/DEPLOY_ZH.md)
+
 ## 功能特性
 
 - 多用户隔离：每个用户独立 `key + secret + target`
