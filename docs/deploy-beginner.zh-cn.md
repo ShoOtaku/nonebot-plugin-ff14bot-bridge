@@ -54,8 +54,10 @@ python -m pip install -U pip setuptools wheel
 ## 4. 安装 NoneBot 与插件
 
 ```bash
-pip install "nonebot2[fastapi]" "nonebot-adapter-onebot" nonebot-plugin-ff14bot-bridge
+pip install "nonebot2[fastapi]" "nonebot-adapter-onebot" "git+https://github.com/ShoOtaku/nonebot-plugin-ff14bot-bridge.git"
 ```
+
+说明：截至 2026-03-11，本插件尚未发布到 PyPI，不能直接使用 `pip install nonebot-plugin-ff14bot-bridge`。
 
 ## 5. 创建最小可运行 `bot.py`
 

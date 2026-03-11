@@ -84,7 +84,15 @@ pip install "nonebot2[fastapi]" "nonebot-adapter-onebot"
 在 NoneBot 项目根目录执行：
 
 ```bash
-pip install nonebot-plugin-ff14bot-bridge
+pip install "git+https://github.com/ShoOtaku/nonebot-plugin-ff14bot-bridge.git"
+```
+
+说明：截至 2026-03-11，本插件尚未发布到 PyPI，不能直接使用 `pip install nonebot-plugin-ff14bot-bridge`。
+
+如果你已经把仓库克隆到本地，也可以在仓库目录执行：
+
+```bash
+pip install -e .
 ```
 
 在 `bot.py`（或统一插件加载文件）中确保已加载：
@@ -421,7 +429,7 @@ certbot --nginx -d nb.example.com
 
 ```bash
 source .venv/bin/activate
-pip install -U nonebot-plugin-ff14bot-bridge
+pip install -U "git+https://github.com/ShoOtaku/nonebot-plugin-ff14bot-bridge.git@main"
 systemctl restart nonebot
 ```
 
@@ -429,7 +437,7 @@ systemctl restart nonebot
 
 ```bash
 source .venv/bin/activate
-pip install nonebot-plugin-ff14bot-bridge==<旧版本号>
+pip install "git+https://github.com/ShoOtaku/nonebot-plugin-ff14bot-bridge.git@<commit_or_tag>"
 systemctl restart nonebot
 ```
 
