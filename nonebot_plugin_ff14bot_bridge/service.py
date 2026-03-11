@@ -10,7 +10,7 @@ import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Deque, Dict, Optional, Tuple
+from typing import Any, Deque, Dict, Optional, Tuple
 
 from nonebot import get_bots, logger
 from pydantic import BaseModel, Field
@@ -58,6 +58,13 @@ class DownlinkMessage:
     sender_user_id: str = ""
 
 
+@dataclass
+class PendingDownlinkState:
+    item: DownlinkMessage
+    pushed_at: float
+    attempts: int = 1
+
+
 class FF14BridgeService:
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -66,9 +73,13 @@ class FF14BridgeService:
         self._rate_cache: Dict[str, Deque[float]] = defaultdict(deque)
         self._pull_rate_cache: Dict[str, Deque[float]] = defaultdict(deque)
         self._downlink_queues: Dict[str, Deque[DownlinkMessage]] = defaultdict(deque)
+        self._pending_downlink: Dict[str, Dict[str, PendingDownlinkState]] = defaultdict(dict)
+        self._ws_clients: Dict[str, Any] = {}
+        self._ws_last_pong: Dict[str, float] = {}
         self._lock = asyncio.Lock()
         self._clients_lock = asyncio.Lock()
         self._downlink_lock = asyncio.Lock()
+        self._ws_lock = asyncio.Lock()
 
         self._clients_path = Path((config.ff14_bridge_clients_file or "data/ff14_bridge/clients.json").strip())
         self._clients_by_key: Dict[str, BridgeClient] = {}
@@ -227,6 +238,14 @@ class FF14BridgeService:
             return ingest[: -len("/ff14/bridge/ingest")] + "/ff14/bridge/pull"
         return ingest.rstrip("/") + "/ff14/bridge/pull"
 
+    def get_public_ws_endpoint(self) -> str:
+        pull = self.get_public_pull_endpoint()
+        if pull.startswith("https://"):
+            return "wss://" + pull[len("https://") : -len("/ff14/bridge/pull")] + "/ff14/bridge/ws"
+        if pull.startswith("http://"):
+            return "ws://" + pull[len("http://") : -len("/ff14/bridge/pull")] + "/ff14/bridge/ws"
+        return pull.rstrip("/") + "/ws"
+
     def get_client_by_key(self, bridge_key: str) -> Optional[BridgeClient]:
         key = (bridge_key or "").strip()
         if not key:
@@ -360,6 +379,14 @@ class FF14BridgeService:
         expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
         return hmac.compare_digest(signature.strip().lower(), expected.lower())
 
+    def build_ws_auth_body(self, bridge_key: str, nonce: str) -> bytes:
+        body = {
+            "bridge_key": str(bridge_key or "").strip(),
+            "nonce": str(nonce or "").strip(),
+        }
+        raw = json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        return raw.encode("utf-8")
+
     async def check_and_mark_duplicate(self, bridge_key: str, event_id: str) -> bool:
         now = time.time()
         ttl = max(self.config.ff14_bridge_dedup_ttl_seconds, 1)
@@ -403,6 +430,56 @@ class FF14BridgeService:
             queue.append(now)
             return True
 
+    async def register_ws_client(self, bridge_key: str, client: Any) -> Optional[Any]:
+        key = str(bridge_key or "").strip()
+        if not key:
+            return None
+        async with self._ws_lock:
+            previous = self._ws_clients.get(key)
+            self._ws_clients[key] = client
+            self._ws_last_pong[key] = time.time()
+            return previous
+
+    async def unregister_ws_client(self, bridge_key: str, client: Optional[Any] = None) -> bool:
+        key = str(bridge_key or "").strip()
+        if not key:
+            return False
+        async with self._ws_lock:
+            current = self._ws_clients.get(key)
+            if current is None:
+                return False
+            if client is not None and current is not client:
+                return False
+            self._ws_clients.pop(key, None)
+            self._ws_last_pong.pop(key, None)
+            return True
+
+    async def is_ws_client_online(self, bridge_key: str) -> bool:
+        key = str(bridge_key or "").strip()
+        if not key:
+            return False
+        async with self._ws_lock:
+            return key in self._ws_clients
+
+    async def touch_ws_pong(self, bridge_key: str) -> None:
+        key = str(bridge_key or "").strip()
+        if not key:
+            return
+        async with self._ws_lock:
+            if key in self._ws_clients:
+                self._ws_last_pong[key] = time.time()
+
+    async def get_ws_last_pong(self, bridge_key: str) -> float:
+        key = str(bridge_key or "").strip()
+        if not key:
+            return 0.0
+        async with self._ws_lock:
+            return self._ws_last_pong.get(key, 0.0)
+
+    async def get_ws_online_client_count(self) -> int:
+        async with self._ws_lock:
+            return len(self._ws_clients)
+
     @staticmethod
     def _trim_text(text: str) -> str:
         # 聊天下发不需要保留换行，避免游戏端输入污染。
@@ -414,6 +491,15 @@ class FF14BridgeService:
         if len(normalized) > max_length:
             normalized = normalized[:max_length]
         return normalized
+
+    @staticmethod
+    def _serialize_downlink_message(item: DownlinkMessage) -> dict:
+        return {
+            "message_id": item.message_id,
+            "content": item.content,
+            "created_at": item.created_at,
+            "sender_user_id": item.sender_user_id,
+        }
 
     async def enqueue_user_downlink(self, user_id: str, text: str) -> Tuple[bool, str, Optional[BridgeClient]]:
         owner = str(user_id).strip()
@@ -473,20 +559,100 @@ class FF14BridgeService:
         async with self._downlink_lock:
             queue = self._downlink_queues[key]
             self._cleanup_downlink_queue_locked(queue, now)
+            self._cleanup_pending_downlink_locked(key, now)
             while queue and len(results) < safe_limit:
                 item = queue.popleft()
-                results.append(
-                    {
-                        "message_id": item.message_id,
-                        "content": item.content,
-                        "created_at": item.created_at,
-                        "sender_user_id": item.sender_user_id,
-                    }
-                )
+                results.append(self._serialize_downlink_message(item))
             if not queue:
                 self._downlink_queues.pop(key, None)
 
         return results
+
+    async def acquire_downlink_for_ws(self, bridge_key: str, limit: int) -> list[dict]:
+        key = str(bridge_key or "").strip()
+        if not key:
+            return []
+
+        safe_limit = min(max(int(limit), 1), 20)
+        now = time.time()
+        results: list[dict] = []
+        ack_timeout = max(self.config.ff14_bridge_ws_ack_timeout_seconds, 1)
+
+        async with self._downlink_lock:
+            queue = self._downlink_queues[key]
+            pending_map = self._pending_downlink[key]
+            self._cleanup_downlink_queue_locked(queue, now)
+            self._cleanup_pending_downlink_locked(key, now)
+
+            # Retry pending messages that were pushed but not ACKed in time.
+            for state in sorted(pending_map.values(), key=lambda item: item.pushed_at):
+                if len(results) >= safe_limit:
+                    break
+                if now - state.pushed_at < ack_timeout:
+                    continue
+                state.pushed_at = now
+                state.attempts += 1
+                results.append(self._serialize_downlink_message(state.item))
+
+            while queue and len(results) < safe_limit:
+                item = queue.popleft()
+                pending_map[item.message_id] = PendingDownlinkState(item=item, pushed_at=now, attempts=1)
+                results.append(self._serialize_downlink_message(item))
+
+            if not queue:
+                self._downlink_queues.pop(key, None)
+            if not pending_map:
+                self._pending_downlink.pop(key, None)
+
+        return results
+
+    async def ack_downlink(self, bridge_key: str, message_id: str) -> bool:
+        key = str(bridge_key or "").strip()
+        msg_id = str(message_id or "").strip()
+        if not key or not msg_id:
+            return False
+
+        async with self._downlink_lock:
+            pending_map = self._pending_downlink.get(key)
+            if not pending_map:
+                return False
+            removed = pending_map.pop(msg_id, None)
+            if not pending_map:
+                self._pending_downlink.pop(key, None)
+            return removed is not None
+
+    async def requeue_pending_downlink(self, bridge_key: str) -> int:
+        key = str(bridge_key or "").strip()
+        if not key:
+            return 0
+
+        now = time.time()
+        queue_size = max(self.config.ff14_bridge_downlink_queue_size, 1)
+        restored = 0
+
+        async with self._downlink_lock:
+            pending_map = self._pending_downlink.pop(key, {})
+            if not pending_map:
+                return 0
+
+            queue = self._downlink_queues[key]
+            self._cleanup_downlink_queue_locked(queue, now)
+
+            # Restore in created_at order to keep user-visible ordering stable.
+            pending_items = sorted((state.item for state in pending_map.values()), key=lambda item: item.created_at)
+            for item in reversed(pending_items):
+                if item.expire_at <= now:
+                    continue
+                queue.appendleft(item)
+                restored += 1
+
+            while len(queue) > queue_size:
+                queue.pop()
+
+            if not queue:
+                self._downlink_queues.pop(key, None)
+
+        return restored
 
     async def get_user_downlink_queue_size(self, user_id: str) -> int:
         owner = str(user_id).strip()
@@ -504,13 +670,17 @@ class FF14BridgeService:
         now = time.time()
         async with self._downlink_lock:
             queue = self._downlink_queues.get(key)
-            if queue is None:
-                return 0
-            self._cleanup_downlink_queue_locked(queue, now)
-            if not queue:
-                self._downlink_queues.pop(key, None)
-                return 0
-            return len(queue)
+            pending_map = self._pending_downlink.get(key)
+            if queue is not None:
+                self._cleanup_downlink_queue_locked(queue, now)
+                if not queue:
+                    self._downlink_queues.pop(key, None)
+                    queue = None
+            self._cleanup_pending_downlink_locked(key, now)
+            if pending_map is not None and not pending_map:
+                self._pending_downlink.pop(key, None)
+                pending_map = None
+            return (len(queue) if queue is not None else 0) + (len(pending_map) if pending_map is not None else 0)
 
     def format_message(self, payload: IngestPayload) -> str:
         sent_at = payload.sent_at or time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -568,6 +738,20 @@ class FF14BridgeService:
         expired = [event_id for event_id, ts in self._dedup_cache.items() if now - ts > ttl]
         for event_id in expired:
             self._dedup_cache.pop(event_id, None)
+
+    def _cleanup_pending_downlink_locked(self, bridge_key: str, now: float) -> None:
+        pending_map = self._pending_downlink.get(bridge_key)
+        if not pending_map:
+            return
+        expired_ids = [
+            message_id
+            for message_id, state in pending_map.items()
+            if state.item.expire_at <= now
+        ]
+        for message_id in expired_ids:
+            pending_map.pop(message_id, None)
+        if not pending_map:
+            self._pending_downlink.pop(bridge_key, None)
 
     @staticmethod
     def _cleanup_downlink_queue_locked(queue: Deque[DownlinkMessage], now: float) -> None:

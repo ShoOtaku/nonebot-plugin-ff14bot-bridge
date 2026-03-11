@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
+import time
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from nonebot import get_driver, logger, on_command
 from nonebot.adapters import Event, Message
 from nonebot.params import CommandArg
@@ -22,7 +24,9 @@ __plugin_meta__ = PluginMetadata(
         "/ff14bot rotate\n"
         "/ff14bot enable|disable\n"
         "/ff14bot status\n"
-        "/ff14bot send <消息>"
+        "/ff14bot send <消息>\n"
+        "HTTP: /ff14/bridge/ingest, /ff14/bridge/pull\n"
+        "WS: /ff14/bridge/ws"
     ),
     type="application",
 )
@@ -30,6 +34,20 @@ __plugin_meta__ = PluginMetadata(
 
 class PullRequest(BaseModel):
     limit: int = Field(default=5, ge=1, le=20)
+
+
+class WsAuthRequest(BaseModel):
+    op: str = Field(default="auth")
+    bridge_key: str = Field(min_length=1)
+    timestamp: str = Field(min_length=1)
+    nonce: str = Field(min_length=1)
+    signature: str = Field(min_length=1)
+
+
+def _model_validate(model_cls, raw):
+    if hasattr(model_cls, "model_validate"):
+        return model_cls.model_validate(raw)
+    return model_cls.parse_obj(raw)
 
 
 def _load_config() -> Config:
@@ -156,6 +174,114 @@ async def pull_bridge_command(
     return {"ok": True, "count": len(messages), "messages": messages}
 
 
+async def _safe_ws_close(websocket: WebSocket, code: int = 1000, reason: str = "") -> None:
+    try:
+        await websocket.close(code=code, reason=reason)
+    except Exception:  # noqa: BLE001
+        return
+
+
+@router.websocket("/ff14/bridge/ws")
+async def ws_bridge_command(websocket: WebSocket) -> None:
+    bridge_key = ""
+    ws_registered = False
+
+    if not plugin_config.ff14_bridge_enabled or not plugin_config.ff14_bridge_ws_enabled:
+        await _safe_ws_close(websocket, code=1008, reason="bridge_disabled")
+        return
+
+    await websocket.accept()
+
+    try:
+        raw_auth = await asyncio.wait_for(websocket.receive_json(), timeout=10.0)
+        auth = _model_validate(WsAuthRequest, raw_auth)
+        if (auth.op or "").strip().lower() != "auth":
+            await _safe_ws_close(websocket, code=1008, reason="invalid_op")
+            return
+
+        bridge_key = auth.bridge_key.strip()
+        bridge_client = service.get_client_by_key(bridge_key)
+        if bridge_client is None:
+            await _safe_ws_close(websocket, code=1008, reason="invalid_key")
+            return
+
+        if not service.check_timestamp(auth.timestamp):
+            await _safe_ws_close(websocket, code=1008, reason="invalid_timestamp")
+            return
+
+        auth_body = service.build_ws_auth_body(bridge_key, auth.nonce)
+        if not service.verify_signature(auth_body, auth.timestamp, auth.signature, bridge_client.secret):
+            await _safe_ws_close(websocket, code=1008, reason="invalid_signature")
+            return
+
+        previous = await service.register_ws_client(bridge_key, websocket)
+        ws_registered = True
+        if previous is not None and previous is not websocket:
+            await _safe_ws_close(previous, code=1012, reason="replaced")
+
+        await websocket.send_json({"op": "auth_ok", "ts": int(time.time())})
+        await _run_ws_session(websocket, bridge_key)
+    except WebSocketDisconnect:
+        pass
+    except asyncio.TimeoutError:
+        await _safe_ws_close(websocket, code=1008, reason="auth_timeout")
+    except ValidationError:
+        await _safe_ws_close(websocket, code=1008, reason="invalid_auth_payload")
+    except Exception as ex:  # noqa: BLE001
+        logger.warning(f"[ff14_bridge] websocket session error: {ex}")
+        await _safe_ws_close(websocket, code=1011, reason="internal_error")
+    finally:
+        if ws_registered and bridge_key:
+            await service.unregister_ws_client(bridge_key, websocket)
+            await service.requeue_pending_downlink(bridge_key)
+
+
+async def _run_ws_session(websocket: WebSocket, bridge_key: str) -> None:
+    ping_interval = max(plugin_config.ff14_bridge_ws_ping_interval_seconds, 5)
+    client_timeout = max(plugin_config.ff14_bridge_ws_client_timeout_seconds, ping_interval + 5)
+    push_batch = max(plugin_config.ff14_bridge_ws_push_batch_size, 1)
+
+    next_ping_at = time.time() + ping_interval
+
+    while True:
+        outbound = await service.acquire_downlink_for_ws(bridge_key, push_batch)
+        for item in outbound:
+            await websocket.send_json({"op": "push", **item})
+
+        now = time.time()
+        if now >= next_ping_at:
+            await websocket.send_json({"op": "ping", "ts": int(now)})
+            next_ping_at = now + ping_interval
+
+        last_pong = await service.get_ws_last_pong(bridge_key)
+        if last_pong > 0 and now - last_pong > client_timeout:
+            await _safe_ws_close(websocket, code=1001, reason="pong_timeout")
+            return
+
+        try:
+            payload = await asyncio.wait_for(websocket.receive_json(), timeout=1.0)
+        except asyncio.TimeoutError:
+            continue
+        except WebSocketDisconnect:
+            return
+
+        op = str(payload.get("op", "")).strip().lower() if isinstance(payload, dict) else ""
+        if op == "ack":
+            message_id = str(payload.get("message_id", "")).strip() if isinstance(payload, dict) else ""
+            if message_id:
+                await service.ack_downlink(bridge_key, message_id)
+            continue
+
+        if op == "pong":
+            await service.touch_ws_pong(bridge_key)
+            continue
+
+        if op == "ping":
+            await service.touch_ws_pong(bridge_key)
+            await websocket.send_json({"op": "pong", "ts": int(time.time())})
+            continue
+
+
 driver = get_driver()
 server_app = getattr(driver, "server_app", None)
 if server_app is not None:
@@ -191,7 +317,7 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
                     "ff14bot disable   - 禁用个人桥接",
                     "ff14bot unregister- 注销个人桥接",
                     "ff14bot status    - 查看桥接状态",
-                    "ff14bot send xxx  - 下发消息到游戏",
+                    "ff14bot send xxx  - 下发消息到游戏(优先WS)",
                 ]
             )
         )
@@ -200,12 +326,14 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
         stats = service.snapshot()
         own_client = service.get_user_client(user_id)
         own_queue_size = await service.get_user_downlink_queue_size(user_id)
+        ws_online_clients = await service.get_ws_online_client_count()
         lines = [
             "[ff14bot] 状态",
             f"accepted: {stats.accepted}",
             f"rejected: {stats.rejected}",
             f"duplicated: {stats.duplicated}",
             f"registered_clients: {stats.registered_clients}",
+            f"ws_online_clients: {ws_online_clients}",
             f"last_error: {stats.last_error or '无'}",
             f"last_accepted_at: {_format_time(stats.last_accepted_at)}",
         ]
@@ -236,6 +364,7 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
                     f"[ff14bot] {action_text}",
                     f"Endpoint: {service.get_public_endpoint()}",
                     f"Pull Endpoint: {service.get_public_pull_endpoint()}",
+                    f"WebSocket Endpoint: {service.get_public_ws_endpoint()}",
                     f"Bridge Key: {client.bridge_key}",
                     f"Bridge Secret: {client.secret}",
                     f"Target: {client.target_type}:{client.target_id}",
@@ -254,6 +383,7 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
                     "[ff14bot] 你的桥接凭证",
                     f"Endpoint: {service.get_public_endpoint()}",
                     f"Pull Endpoint: {service.get_public_pull_endpoint()}",
+                    f"WebSocket Endpoint: {service.get_public_ws_endpoint()}",
                     f"Bridge Key: {client.bridge_key}",
                     f"Bridge Secret: {client.secret}",
                     f"Enabled: {client.enabled}",
@@ -272,6 +402,7 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
                     "[ff14bot] 已轮换密钥",
                     f"Endpoint: {service.get_public_endpoint()}",
                     f"Pull Endpoint: {service.get_public_pull_endpoint()}",
+                    f"WebSocket Endpoint: {service.get_public_ws_endpoint()}",
                     f"Bridge Key: {client.bridge_key}",
                     f"Bridge Secret: {client.secret}",
                     "请立即更新卫月端配置。",
@@ -295,7 +426,7 @@ async def handle_ff14bot(event: Event, args: Message = CommandArg()) -> None:
             await ff14bot_command.finish("[ff14bot] 下发失败，请稍后重试。")
 
         queue_size = await service.get_bridge_downlink_queue_size(client.bridge_key if client else "")
-        await ff14bot_command.finish(f"[ff14bot] 已入队，等待游戏端拉取。当前排队: {queue_size}")
+        await ff14bot_command.finish(f"[ff14bot] 已入队，等待游戏端 WS 推送或 Pull 拉取。当前待处理: {queue_size}")
 
     if action in {"enable", "启用"}:
         client = await service.set_user_enabled(user_id, True)

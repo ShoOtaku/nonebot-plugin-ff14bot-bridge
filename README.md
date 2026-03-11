@@ -1,34 +1,31 @@
 # nonebot-plugin-ff14bot-bridge
 
 FF14 聊天桥接插件（NoneBot2），支持多用户独立密钥管理与双向通信。  
-用户通过私聊机器人执行 `ff14bot` 命令注册自己的 `Bridge Key/Secret`，游戏端按个人凭证上报聊天消息；也可通过 QQ 下发 `ff14bot send` 到游戏。
-
-## 相关链接
-
-- NoneBot 官方文档：https://nonebot.dev/docs/
-- 插件部署文档：[docs/DEPLOY_ZH.md](./docs/DEPLOY_ZH.md)
+游戏端上行走 HTTP，机器人下行优先 WebSocket，失败回退 Pull。
 
 ## 功能特性
 
 - 多用户隔离：每个用户独立 `key + secret + target`
-- HMAC-SHA256 验签：防伪造、防篡改
-- 时间窗校验：防重放
-- 去重与限流：防刷屏、防重复消息
-- 自助命令：`ff14bot register/show/rotate/enable/disable/unregister/status`
-- 下行命令：`ff14bot send <消息>`（QQ -> 游戏）
-- 管理员列表：`ff14bot list`（仅管理员）
+- 安全校验：HMAC-SHA256 + 时间窗 + 去重 + 限流
+- 下行链路：WS push + ACK，异常自动回退 pull
+- 自助命令：`ff14bot register/show/rotate/enable/disable/unregister/status/send`
+- 管理员命令：`ff14bot list`
+
+## 接口
+
+- `POST /ff14/bridge/ingest`
+- `POST /ff14/bridge/pull`
+- `WS /ff14/bridge/ws`
 
 ## 安装
 
-从源码安装：
-
 ```bash
-git clone https://github.com/<your-org>/nonebot-plugin-ff14bot-bridge.git
+git clone https://github.com/ShoOtaku/nonebot-plugin-ff14bot-bridge.git
 cd nonebot-plugin-ff14bot-bridge
 pip install -e .
 ```
 
-在 NoneBot 项目中启用插件：
+在 NoneBot 项目中启用：
 
 ```python
 nonebot.load_plugin("nonebot_plugin_ff14bot_bridge")
@@ -38,73 +35,29 @@ nonebot.load_plugin("nonebot_plugin_ff14bot_bridge")
 
 参考 [.env.example](./.env.example)。
 
-核心变量：
+核心参数：
 
-- `FF14_BRIDGE_ENABLED=true`
-- `FF14_BRIDGE_CLIENTS_FILE=data/ff14_bridge/clients.json`
-- `FF14_BRIDGE_ALLOW_SELF_REGISTER=true`
 - `FF14_BRIDGE_PUBLIC_ENDPOINT=https://your-domain/ff14/bridge/ingest`
-- `FF14_BRIDGE_ADMIN_USERS=10001,10002`
-- `FF14_BRIDGE_TIME_WINDOW_SECONDS=60`
-- `FF14_BRIDGE_DEDUP_TTL_SECONDS=300`
-- `FF14_BRIDGE_RATE_LIMIT_PER_MINUTE=120`
-- `FF14_BRIDGE_DOWNLINK_QUEUE_SIZE=100`
-- `FF14_BRIDGE_DOWNLINK_TTL_SECONDS=300`
-- `FF14_BRIDGE_DOWNLINK_MAX_LENGTH=180`
-- `FF14_BRIDGE_PULL_RATE_LIMIT_PER_MINUTE=240`
+- `FF14_BRIDGE_WS_ENABLED=true`
+- `FF14_BRIDGE_WS_PING_INTERVAL_SECONDS=30`
+- `FF14_BRIDGE_WS_CLIENT_TIMEOUT_SECONDS=90`
+- `FF14_BRIDGE_WS_PUSH_BATCH_SIZE=5`
+- `FF14_BRIDGE_WS_ACK_TIMEOUT_SECONDS=15`
 
-## 用户使用流程
+## 用户流程
 
-1. 用户私聊机器人：`ff14bot register`
-2. 机器人返回：
-   - Endpoint
-   - Bridge Key
-   - Bridge Secret
-3. 用户将以上参数填入游戏端插件
-4. 游戏端上报成功后，机器人向该用户目标会话转发消息
-5. 用户可在 QQ 输入 `ff14bot send 你好`，游戏端会在下次拉取时收到并发送
+1. 私聊机器人执行 `ff14bot register`
+2. 拿到 Endpoint / Key / Secret
+3. 填入卫月插件配置
+4. 机器人下发 `ff14bot send <消息>` 时，游戏端优先通过 WS 收到
 
-## 命令说明
+## 文档
 
-- `ff14bot help`
-- `ff14bot register`
-- `ff14bot show`
-- `ff14bot rotate`
-- `ff14bot enable`
-- `ff14bot disable`
-- `ff14bot unregister`
-- `ff14bot status`
-- `ff14bot send <消息>`
-- `ff14bot list`（管理员）
+- 部署文档：[docs/DEPLOY_ZH.md](./docs/DEPLOY_ZH.md)
 
-## HTTP 接口
+## 测试
 
-- `POST /ff14/bridge/ingest`
-- `POST /ff14/bridge/pull`
-
-请求头：
-
-- `X-Bridge-Key`
-- `X-Bridge-Timestamp`
-- `X-Bridge-Signature`
-
-请求体字段：
-
-- `event_id`
-- `source`
-- `chat_type`
-- `player`
-- `world`
-- `content`
-- `sent_at`
-
-## 生产部署建议
-
-- 必须通过 Nginx/Caddy 暴露 HTTPS
-- 不要在公网直接暴露纯 HTTP 接口
-- 使用 `ff14bot rotate` 定期轮换密钥
-- 配置日志采集并监控 401/429/503
-
-详见 [docs/DEPLOY_ZH.md](./docs/DEPLOY_ZH.md)。
-
-此插件纯Vibe产物，请注意使用。
+```bash
+pip install -e .[test]
+pytest -q
+```
