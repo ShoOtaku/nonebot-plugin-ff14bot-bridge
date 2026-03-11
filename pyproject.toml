@@ -17,9 +17,6 @@ dependencies = [
   "nonebot-adapter-onebot>=2.4.0",
   "pydantic>=1.10,<3"
 ]
-
-[project.optional-dependencies]
-test = ["pytest>=7.0"]
 keywords = ["nonebot", "ff14", "bridge", "chat", "onebot"]
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -27,6 +24,9 @@ classifiers = [
   "Framework :: AsyncIO",
   "Topic :: Communications :: Chat"
 ]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
 
 [project.urls]
 Homepage = "https://github.com/ShoOtaku/nonebot-plugin-ff14bot-bridge"
