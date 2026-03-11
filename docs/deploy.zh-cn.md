@@ -6,7 +6,7 @@
 
 - 新手一步一步复制执行：[deploy-beginner.zh-cn.md](./deploy-beginner.zh-cn.md)
 - NapCat 部署与对接：已整合在本文第 6 节
-- Windows 部署（NoneBot + NapCat）：[deploy-windows.zh-cn.md](./deploy-windows.zh-cn.md)
+- Windows 部署（WSL2 + NoneBot + NapCat）：[deploy-windows.zh-cn.md](./deploy-windows.zh-cn.md)
 
 ## 1. 官方参考（建议先收藏）
 

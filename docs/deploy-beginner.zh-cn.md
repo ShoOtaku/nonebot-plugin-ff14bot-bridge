@@ -3,6 +3,8 @@
 本文档给新手准备，目标是“按顺序复制命令就能跑起来”。  
 场景：Ubuntu/Debian Linux 服务器，部署 NoneBot2 + OneBot V11 适配器 + `nonebot-plugin-ff14bot-bridge`。
 
+Windows 用户建议先安装 WSL2，然后在 WSL2 Ubuntu 里执行本文所有 `bash` 命令。
+
 ## 0. 你需要准备
 
 1. 一台 Linux 服务器（推荐 Ubuntu 22.04+）。
@@ -10,11 +12,27 @@
 3. 一个可用 QQ 号（给协议端登录）。
 4. 你可以用 `root` 或 sudo 用户登录服务器。
 
+## 0.1 Windows 用户先做 WSL2 初始化（可选）
+
+如果你是 Windows 10/11，请先在“管理员 PowerShell”执行：
+
+```powershell
+wsl --install -d Ubuntu-22.04
+wsl --set-default-version 2
+```
+
+重启 Windows 后打开 Ubuntu，创建 Linux 用户。  
+之后本文命令都在 Ubuntu 终端里执行，不在 PowerShell 里执行。
+
 ## 1. 登录服务器
+
+远程 Linux 服务器：
 
 ```bash
 ssh root@你的服务器IP
 ```
+
+如果你是在本机 WSL2 Ubuntu 部署，可跳过 `ssh`，直接继续下一步。
 
 ## 2. 安装基础依赖
 
@@ -136,6 +154,11 @@ systemctl status nonebot --no-pager
 ```bash
 journalctl -u nonebot -f
 ```
+
+## WSL2 说明（第 9~11 步）
+
+如果你是在本机 WSL2 调试，且暂时不做公网接入，可以先跳过第 9~11 步（Nginx/HTTPS）。  
+这时 `FF14_BRIDGE_PUBLIC_ENDPOINT` 可先用本地地址，后续需要公网时再补做 Nginx + 证书。
 
 ## 9. 配置 Nginx 反向代理
 

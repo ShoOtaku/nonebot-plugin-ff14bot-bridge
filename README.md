@@ -56,7 +56,7 @@ nonebot.load_plugin("nonebot_plugin_ff14bot_bridge")
 - 详细部署文档：[docs/deploy.zh-cn.md](./docs/deploy.zh-cn.md)
 - 新手复制版教程：[docs/deploy-beginner.zh-cn.md](./docs/deploy-beginner.zh-cn.md)
 - NapCat 独立文档（可选）：[docs/deploy-napcat.zh-cn.md](./docs/deploy-napcat.zh-cn.md)
-- Windows 部署教程（NoneBot + NapCat）：[docs/deploy-windows.zh-cn.md](./docs/deploy-windows.zh-cn.md)
+- Windows 部署教程（WSL2 + NoneBot + NapCat）：[docs/deploy-windows.zh-cn.md](./docs/deploy-windows.zh-cn.md)
 
 ## 测试
 
