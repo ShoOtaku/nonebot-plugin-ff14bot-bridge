@@ -152,3 +152,15 @@ def test_ws_downlink_ack_and_requeue(tmp_path):
     pulled = asyncio.run(service.dequeue_downlink(client.bridge_key, 5))
     assert len(pulled) == 1
     assert pulled[0]["content"] == "again"
+
+
+def test_admin_users_accept_int_and_list():
+    cfg_int = Config(ff14_bridge_admin_users=419827274)
+    service_int = FF14BridgeService(cfg_int)
+    assert service_int.is_admin("419827274") is True
+
+    cfg_list = Config(ff14_bridge_admin_users=[111, "222", " 333 "])
+    service_list = FF14BridgeService(cfg_list)
+    assert service_list.is_admin("111") is True
+    assert service_list.is_admin("222") is True
+    assert service_list.is_admin("333") is True

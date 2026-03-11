@@ -90,10 +90,13 @@ class FF14BridgeService:
     def _parse_admin_users(raw: object) -> set[str]:
         if raw is None:
             return set()
-        normalized = str(raw).strip()
-        if not normalized:
+        if isinstance(raw, (list, tuple, set)):
+            merged = ",".join(str(item).strip() for item in raw if str(item).strip())
+        else:
+            merged = str(raw).strip()
+        if not merged:
             return set()
-        normalized = normalized.replace(";", ",").replace("\n", ",")
+        normalized = merged.replace(";", ",").replace("\n", ",")
         return {item.strip() for item in normalized.split(",") if item.strip()}
 
     @staticmethod

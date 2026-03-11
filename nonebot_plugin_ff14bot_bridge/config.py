@@ -13,7 +13,7 @@ class Config(BaseModel):
     # Multi-tenant storage.
     ff14_bridge_clients_file: str = Field(default="data/ff14_bridge/clients.json")
     ff14_bridge_allow_self_register: bool = Field(default=True)
-    ff14_bridge_admin_users: str = Field(default="")
+    ff14_bridge_admin_users: str | int | list[str | int] = Field(default="")
     ff14_bridge_public_endpoint: str = Field(default="")
 
     # Validation / anti-abuse.
