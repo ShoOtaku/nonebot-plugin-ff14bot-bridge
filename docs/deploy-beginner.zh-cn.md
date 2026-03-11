@@ -14,15 +14,36 @@ Windows 用户建议先安装 WSL2，然后在 WSL2 Ubuntu 里执行本文所有
 
 ## 0.1 Windows 用户先做 WSL2 初始化（可选）
 
-如果你是 Windows 10/11，请先在“管理员 PowerShell”执行：
+如果你是 Windows 10/11，请先在“管理员 PowerShell”执行（详细版见 `docs/deploy-windows.zh-cn.md` 第 2 节）：
 
 ```powershell
 wsl --install -d Ubuntu-22.04
 wsl --set-default-version 2
 ```
 
-重启 Windows 后打开 Ubuntu，创建 Linux 用户。  
-之后本文命令都在 Ubuntu 终端里执行，不在 PowerShell 里执行。
+若 `wsl --install` 不可用，先执行：
+
+```powershell
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+```
+
+然后重启，再执行前面的 `wsl` 命令。
+
+安装完成后请验证：
+
+```powershell
+wsl -l -v
+```
+
+确认 `Ubuntu-22.04` 的 `VERSION` 为 `2`，否则执行：
+
+```powershell
+wsl --set-version Ubuntu-22.04 2
+```
+
+最后打开 Ubuntu，创建 Linux 用户。  
+之后本文命令都在 Ubuntu 终端执行，不在 PowerShell 执行。
 
 ## 1. 登录服务器
 

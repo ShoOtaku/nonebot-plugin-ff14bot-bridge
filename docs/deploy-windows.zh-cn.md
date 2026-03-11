@@ -18,16 +18,81 @@
 - NapCat 官方文档：<https://napneko.github.io/>
 - NapCat Docker 仓库：<https://github.com/NapNeko/NapCat-Docker>
 
-## 2. 安装 WSL2（Windows 侧）
+## 2. 安装 WSL2（Windows 侧，详细步骤）
 
-使用“管理员 PowerShell”执行：
+> 适用系统：Windows 11，或 Windows 10 2004+（内部版本号 19041 及以上）。
+
+### 2.1 用管理员身份打开 PowerShell
+
+1. 开始菜单搜索 `PowerShell`。
+2. 右键“Windows PowerShell”。
+3. 选择“以管理员身份运行”。
+
+### 2.2 检查 WSL 状态（可选但推荐）
+
+```powershell
+wsl --status
+```
+
+如果提示找不到 `wsl`，先安装系统更新，再继续后续步骤。
+
+### 2.3 安装 WSL 与 Ubuntu
 
 ```powershell
 wsl --install -d Ubuntu-22.04
 wsl --set-default-version 2
 ```
 
-安装后重启 Windows，然后打开 Ubuntu 终端，按提示创建 Linux 用户名和密码。
+如果你的系统较旧、`wsl --install` 不可用，可改用兼容命令：
+
+```powershell
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+```
+
+执行后重启 Windows，再回到管理员 PowerShell 执行：
+
+```powershell
+wsl --set-default-version 2
+wsl --install -d Ubuntu-22.04
+```
+
+### 2.4 首次初始化 Ubuntu
+
+1. 重启后打开 `Ubuntu 22.04`。
+2. 首次启动会提示创建 Linux 用户名与密码（与 Windows 账号无关）。
+3. 完成后会进入 Ubuntu shell。
+
+### 2.5 安装结果验证（必须做）
+
+在 PowerShell 执行：
+
+```powershell
+wsl -l -v
+```
+
+确认 `Ubuntu-22.04` 一行中的 `VERSION` 为 `2`。  
+如果不是 2，执行：
+
+```powershell
+wsl --set-version Ubuntu-22.04 2
+```
+
+在 Ubuntu 终端执行：
+
+```bash
+uname -r
+cat /etc/os-release
+```
+
+看到内核版本与 Ubuntu 版本信息即可。
+
+### 2.6 常见报错与修复
+
+1. 报错 `0x80370102`：通常是 BIOS 没开虚拟化（Intel VT-x / AMD-V），开启后重试。
+2. 报错“请启用 Virtual Machine Platform”：重新执行上面的 `dism.exe` 两条命令并重启。
+3. `wsl -l -v` 里没有 Ubuntu：重新执行 `wsl --install -d Ubuntu-22.04`。
+4. 首次打开 Ubuntu 卡住：先执行 `wsl --shutdown`，再重新打开 Ubuntu。
 
 ## 3. 在 WSL2 启用 systemd（推荐）
 
