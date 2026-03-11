@@ -430,15 +430,17 @@ class FF14BridgeService:
             queue.append(now)
             return True
 
-    async def register_ws_client(self, bridge_key: str, client: Any) -> Optional[Any]:
+    async def register_ws_client(self, bridge_key: str, client: Any) -> Tuple[Optional[Any], bool]:
         key = str(bridge_key or "").strip()
         if not key:
-            return None
+            return None, False
         async with self._ws_lock:
             previous = self._ws_clients.get(key)
+            if previous is not None and previous is not client:
+                return previous, False
             self._ws_clients[key] = client
             self._ws_last_pong[key] = time.time()
-            return previous
+            return previous, True
 
     async def unregister_ws_client(self, bridge_key: str, client: Optional[Any] = None) -> bool:
         key = str(bridge_key or "").strip()

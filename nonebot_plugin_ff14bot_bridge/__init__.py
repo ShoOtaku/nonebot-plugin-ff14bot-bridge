@@ -214,10 +214,16 @@ async def ws_bridge_command(websocket: WebSocket) -> None:
             await _safe_ws_close(websocket, code=1008, reason="invalid_signature")
             return
 
-        previous = await service.register_ws_client(bridge_key, websocket)
+        _, registered = await service.register_ws_client(bridge_key, websocket)
+        if not registered:
+            logger.warning(
+                "[ff14_bridge] websocket duplicate rejected: "
+                f"bridge_key={bridge_key}, reason=already_connected"
+            )
+            await _safe_ws_close(websocket, code=1013, reason="already_connected")
+            return
+
         ws_registered = True
-        if previous is not None and previous is not websocket:
-            await _safe_ws_close(previous, code=1012, reason="replaced")
 
         await websocket.send_json({"op": "auth_ok", "ts": int(time.time())})
         await _run_ws_session(websocket, bridge_key)
