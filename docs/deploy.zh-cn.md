@@ -31,6 +31,8 @@
 3. Nginx 暴露 `443`，统一反代到本地 NoneBot（如 `127.0.0.1:8080`）。
 4. FF14 端只访问 HTTPS/WSS 公网域名，不直连内网端口。
 
+如果你仅做本机调试（无域名、无公网接入），可暂时不走 Nginx/HTTPS，直接使用 `http://127.0.0.1:8080` 与 `ws://127.0.0.1:8080`。
+
 ## 3. 前置条件
 
 ## 3.1 软件与版本
@@ -38,7 +40,7 @@
 - Linux 服务器（Ubuntu 22.04+ / Debian 12+）
 - Python 3.9+
 - Git
-- 可用域名（例：`nb.example.com`）
+- 可用域名（例：`nb.example.com`，仅公网 HTTPS 接入时需要）
 - OneBot V11 协议端（NapCat、go-cqhttp 等）
 
 ## 3.2 网络与端口建议
@@ -47,6 +49,8 @@
   - `80/tcp`（申请证书时可临时使用）
   - `443/tcp`
 - NoneBot 监听 `127.0.0.1:8080`（不直接公网暴露）
+
+无域名本地调试时，可不开放公网端口，仅本机访问 `127.0.0.1:8080`。
 
 ## 4. 从零创建 NoneBot2 项目（如你已有项目可跳过）
 
@@ -198,15 +202,21 @@ docker logs -f napcat
 cp .env.example .env
 ```
 
-至少修改以下关键项（按你的真实域名和管理员 QQ）：
+至少修改以下关键项（按你的场景和管理员 QQ）：
 
 ```env
 FF14_BRIDGE_ENABLED=true
 FF14_BRIDGE_CLIENTS_FILE=data/ff14_bridge/clients.json
 FF14_BRIDGE_ALLOW_SELF_REGISTER=true
-FF14_BRIDGE_PUBLIC_ENDPOINT=https://nb.example.com/ff14/bridge/ingest
+FF14_BRIDGE_PUBLIC_ENDPOINT=http://127.0.0.1:8080/ff14/bridge/ingest
 FF14_BRIDGE_ADMIN_USERS=123456,10001
 FF14_BRIDGE_WS_ENABLED=true
+```
+
+如果是公网 HTTPS 场景，再改成：
+
+```env
+FF14_BRIDGE_PUBLIC_ENDPOINT=https://你的真实域名/ff14/bridge/ingest
 ```
 
 参数说明（与代码一致）：
@@ -271,6 +281,8 @@ ff14bot status
 命令返回正常即表示 NapCat 与 NoneBot 已正确对接。
 
 ## 9. 生产部署（systemd + Nginx + HTTPS）
+
+如果你无域名、仅本地调试，可先完成 `9.1`，暂时跳过 `9.2` 与 `9.3`。
 
 ## 9.1 systemd 守护进程
 
@@ -449,7 +461,8 @@ systemctl restart nonebot
 ## 15. 最终验收（上线前 5 分钟检查）
 
 1. `systemctl status nonebot` 为 active。
-2. `nginx -t` 通过且 `systemctl status nginx` 正常。
-3. `https://nb.example.com/ff14/bridge/ingest` 可访问（无 key 时返回 401）。
-4. 机器人私聊命令 `ff14bot register/status/send` 全部可用。
-5. 游戏端能收到 QQ 下行消息，且 WS 断开后 Pull 回退正常。
+2. （公网 HTTPS 场景）`nginx -t` 通过且 `systemctl status nginx` 正常。
+3. 无域名本地调试时：`http://127.0.0.1:8080/ff14/bridge/ingest` 可访问（无 key 时返回 401）。
+4. 公网 HTTPS 场景时：`https://你的真实域名/ff14/bridge/ingest` 可访问（无 key 时返回 401）。
+5. 机器人私聊命令 `ff14bot register/status/send` 全部可用。
+6. 游戏端能收到 QQ 下行消息，且 WS 断开后 Pull 回退正常。
