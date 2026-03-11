@@ -8,9 +8,11 @@ Windows 用户建议先安装 WSL2，然后在 WSL2 Ubuntu 里执行本文所有
 ## 0. 你需要准备
 
 1. 一台 Linux 服务器（推荐 Ubuntu 22.04+）。
-2. 一个域名（例如 `nb.example.com`），并已解析到服务器 IP。
+2. 一个域名（例如 `nb.example.com`，仅公网 HTTPS 接入时需要）。
 3. 一个可用 QQ 号（给协议端登录）。
 4. 你可以用 `root` 或 sudo 用户登录服务器。
+
+如果你没有域名、仅本机调试（如 WSL2 本地部署），可以继续按本文执行：把 `FF14_BRIDGE_PUBLIC_ENDPOINT` 设为本地地址，并跳过第 9~11 步（Nginx/HTTPS）。
 
 ## 0.1 Windows 用户先做 WSL2 初始化（可选）
 
@@ -59,7 +61,13 @@ ssh root@你的服务器IP
 
 ```bash
 apt update
-apt install -y python3 python3-venv python3-pip git curl nginx certbot python3-certbot-nginx
+apt install -y python3 python3-venv python3-pip git curl
+```
+
+仅当你需要“域名 + 公网 HTTPS”时，再额外安装：
+
+```bash
+apt install -y nginx certbot python3-certbot-nginx
 ```
 
 ## 3. 创建项目目录与虚拟环境
@@ -114,16 +122,16 @@ DRIVER=~fastapi
 FF14_BRIDGE_ENABLED=true
 FF14_BRIDGE_CLIENTS_FILE=data/ff14_bridge/clients.json
 FF14_BRIDGE_ALLOW_SELF_REGISTER=true
-FF14_BRIDGE_PUBLIC_ENDPOINT=https://nb.example.com/ff14/bridge/ingest
+FF14_BRIDGE_PUBLIC_ENDPOINT=http://127.0.0.1:8080/ff14/bridge/ingest
 FF14_BRIDGE_ADMIN_USERS=123456
 FF14_BRIDGE_WS_ENABLED=true
 ENV
 ```
 
-把域名替换为你的真实域名：
+如果你有域名并准备做公网 HTTPS，再改成：
 
 ```bash
-sed -i 's#nb.example.com#你的真实域名#g' /opt/nonebot-bot/.env
+sed -i 's#http://127.0.0.1:8080/ff14/bridge/ingest#https://你的真实域名/ff14/bridge/ingest#g' /opt/nonebot-bot/.env
 ```
 
 如果你要启用 OneBot Access Token，再追加：
@@ -180,10 +188,10 @@ journalctl -u nonebot -f
 
 ## WSL2 说明（第 9~11 步）
 
-如果你是在本机 WSL2 调试，且暂时不做公网接入，可以先跳过第 9~11 步（Nginx/HTTPS）。  
+如果你是在本机 WSL2 调试，或无域名仅本地部署，可以先跳过第 9~11 步（Nginx/HTTPS）。  
 这时 `FF14_BRIDGE_PUBLIC_ENDPOINT` 可先用本地地址，后续需要公网时再补做 Nginx + 证书。
 
-## 9. 配置 Nginx 反向代理
+## 9. 配置 Nginx 反向代理（仅有域名时需要）
 
 ```bash
 cat > /etc/nginx/conf.d/nonebot.conf <<'NGINX'
@@ -228,7 +236,7 @@ NGINX
 sed -i 's#nb.example.com#你的真实域名#g' /etc/nginx/conf.d/nonebot.conf
 ```
 
-## 10. 申请 HTTPS 证书并重载 Nginx
+## 10. 申请 HTTPS 证书并重载 Nginx（仅有域名时需要）
 
 ```bash
 certbot --nginx -d 你的真实域名
@@ -237,6 +245,14 @@ systemctl reload nginx
 ```
 
 ## 11. 验证桥接接口是否可达
+
+无域名、本地部署：
+
+```bash
+curl -i -X POST "http://127.0.0.1:8080/ff14/bridge/ingest" -d '{}'
+```
+
+有域名、HTTPS 部署：
 
 ```bash
 curl -i -X POST "https://你的真实域名/ff14/bridge/ingest" -d '{}'
@@ -332,15 +348,15 @@ ff14bot status
 ## 13. 最终验收清单
 
 1. `systemctl status nonebot` 为 active。
-2. `nginx -t` 通过。
-3. `https://你的真实域名/ff14/bridge/ingest` 可访问。
+2. （有域名时）`nginx -t` 通过。
+3. 无域名时可访问 `http://127.0.0.1:8080/ff14/bridge/ingest`；有域名时可访问 `https://你的真实域名/ff14/bridge/ingest`。
 4. QQ 私聊机器人执行 `ff14bot help` 能返回帮助。
 5. 私聊执行 `ff14bot register` 能返回 `Bridge Key / Secret / Endpoint`。
 
 ## 14. 常见问题（新手高频）
 
 1. 机器人没反应：先看 `journalctl -u nonebot -f`。
-2. 证书申请失败：检查域名是否解析到本机，以及 80 端口是否放行。
+2. （仅 HTTPS）证书申请失败：检查域名是否解析到本机，以及 80 端口是否放行。
 3. `ff14bot register` 没返回：通常是协议端（NapCat）没连上 NoneBot。
 4. 游戏端收不到下行：优先检查 `/ff14/bridge/ws` 的 Nginx Upgrade 配置是否正确。
 

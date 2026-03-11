@@ -38,6 +38,7 @@ nonebot.load_plugin("nonebot_plugin_ff14bot_bridge")
 核心参数：
 
 - `FF14_BRIDGE_PUBLIC_ENDPOINT=https://your-domain/ff14/bridge/ingest`
+- 本地无域名调试可用：`FF14_BRIDGE_PUBLIC_ENDPOINT=http://127.0.0.1:8080/ff14/bridge/ingest`
 - `FF14_BRIDGE_WS_ENABLED=true`
 - `FF14_BRIDGE_WS_PING_INTERVAL_SECONDS=30`
 - `FF14_BRIDGE_WS_CLIENT_TIMEOUT_SECONDS=90`
