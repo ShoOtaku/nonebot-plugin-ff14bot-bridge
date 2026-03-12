@@ -145,6 +145,12 @@ ENV
 sed -i 's#http://127.0.0.1:8080/ff14/bridge/ingest#https://你的真实域名/ff14/bridge/ingest#g' /opt/nonebot-bot/.env
 ```
 
+如果你是 Windows + WSL2 本机调试，建议把 `FF14_BRIDGE_PUBLIC_ENDPOINT` 改为：
+
+```bash
+sed -i 's#http://127.0.0.1:8080/ff14/bridge/ingest#http://localhost:8080/ff14/bridge/ingest#g' /opt/nonebot-bot/.env
+```
+
 如果你使用 Docker 部署 NapCat（第 12 步），建议把监听地址改为：
 
 ```bash
@@ -270,6 +276,18 @@ sudo systemctl reload nginx
 
 ```bash
 curl -i -X POST "http://127.0.0.1:8080/ff14/bridge/ingest" -d '{}'
+```
+
+如果你在 Windows 侧访问 WSL2 内 NoneBot，优先使用：
+
+```text
+http://localhost:8080/ff14/bridge/ingest
+```
+
+若 `localhost` 不通，再使用 `hostname -I` 查询 WSL IP 后访问：
+
+```text
+http://<WSL的IP>:8080/ff14/bridge/ingest
 ```
 
 有域名、HTTPS 部署：
@@ -456,7 +474,7 @@ ff14bot status
 
 1. `sudo systemctl status nonebot` 为 active。
 2. （有域名时）`sudo nginx -t` 通过。
-3. 无域名时可访问 `http://127.0.0.1:8080/ff14/bridge/ingest`；有域名时可访问 `https://你的真实域名/ff14/bridge/ingest`。
+3. 无域名时可访问 `http://127.0.0.1:8080/ff14/bridge/ingest`（Windows 访问 WSL 优先 `http://localhost:8080/ff14/bridge/ingest`）；有域名时可访问 `https://你的真实域名/ff14/bridge/ingest`。
 4. QQ 私聊机器人执行 `ff14bot help` 能返回帮助。
 5. 私聊执行 `ff14bot register` 能返回 `Bridge Key / Secret / Endpoint`。
 

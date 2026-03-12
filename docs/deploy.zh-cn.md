@@ -249,6 +249,14 @@ FF14_BRIDGE_WS_ENABLED=true
 FF14_BRIDGE_PUBLIC_ENDPOINT=https://你的真实域名/ff14/bridge/ingest
 ```
 
+如果是 Windows + WSL2 本机调试，Windows 访问 WSL 内 NoneBot 建议使用：
+
+```env
+FF14_BRIDGE_PUBLIC_ENDPOINT=http://localhost:8080/ff14/bridge/ingest
+```
+
+若 `localhost` 不通，再改成 `http://<WSL的IP>:8080/ff14/bridge/ingest`（`hostname -I` 查询）。
+
 如果 NapCat 使用 Docker 反向 WS，建议在 `.env` 中设置：
 
 ```env
@@ -511,7 +519,7 @@ systemctl restart nonebot
 
 1. `systemctl status nonebot` 为 active。
 2. （公网 HTTPS 场景）`nginx -t` 通过且 `systemctl status nginx` 正常。
-3. 无域名本地调试时：`http://127.0.0.1:8080/ff14/bridge/ingest` 可访问（无 key 时返回 401）。
+3. 无域名本地调试时：`http://127.0.0.1:8080/ff14/bridge/ingest` 可访问（Windows + WSL2 建议优先 `http://localhost:8080/ff14/bridge/ingest`，无 key 时返回 401）。
 4. 公网 HTTPS 场景时：`https://你的真实域名/ff14/bridge/ingest` 可访问（无 key 时返回 401）。
 5. 机器人私聊命令 `ff14bot register/status/send` 全部可用。
 6. 游戏端能收到 QQ 下行消息，且 WS 断开后 Pull 回退正常。

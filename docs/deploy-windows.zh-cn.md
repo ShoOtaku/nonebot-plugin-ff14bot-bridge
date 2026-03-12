@@ -173,7 +173,7 @@ DRIVER=~fastapi
 FF14_BRIDGE_ENABLED=true
 FF14_BRIDGE_CLIENTS_FILE=data/ff14_bridge/clients.json
 FF14_BRIDGE_ALLOW_SELF_REGISTER=true
-FF14_BRIDGE_PUBLIC_ENDPOINT=http://127.0.0.1:8080/ff14/bridge/ingest
+FF14_BRIDGE_PUBLIC_ENDPOINT=http://localhost:8080/ff14/bridge/ingest
 FF14_BRIDGE_ADMIN_USERS=123456
 FF14_BRIDGE_WS_ENABLED=true
 ENV
@@ -298,10 +298,22 @@ ff14bot status
 接口连通性检查（可选）：
 
 ```bash
-curl -i -X POST "http://127.0.0.1:8080/ff14/bridge/ingest" -d '{}'
+curl -i -X POST "http://localhost:8080/ff14/bridge/ingest" -d '{}'
 ```
 
 返回 `401 invalid_key` 属于正常现象。
+
+如果你在 Windows 侧访问 WSL2 内接口，也优先使用：
+
+```text
+http://localhost:8080/ff14/bridge/ingest
+```
+
+若 `localhost` 不通，再使用 `hostname -I` 拿到 WSL IP 后访问：
+
+```text
+http://<WSL的IP>:8080/ff14/bridge/ingest
+```
 
 若 NapCat 日志报 `ECONNREFUSED ... host.docker.internal:8080`，先在 WSL 检查 NoneBot 监听：
 
