@@ -133,7 +133,8 @@ docker ps
 ## 5. 部署 NoneBot（在 WSL2 内）
 
 ```bash
-mkdir -p /opt/nonebot-bot
+sudo mkdir -p /opt/nonebot-bot
+sudo chown -R $USER:$USER /opt/nonebot-bot
 cd /opt/nonebot-bot
 python3 -m venv .venv
 source .venv/bin/activate
@@ -165,7 +166,7 @@ PY
 
 ```bash
 cat > /opt/nonebot-bot/.env <<'ENV'
-HOST=127.0.0.1
+HOST=0.0.0.0
 PORT=8080
 DRIVER=~fastapi
 
@@ -178,22 +179,26 @@ FF14_BRIDGE_WS_ENABLED=true
 ENV
 ```
 
+说明：WSL2 内若 NapCat 使用 Docker，`HOST=0.0.0.0` 可让容器访问到 NoneBot。
+
 ## 6. 部署 NapCat（在 WSL2 内）
 
 创建持久化目录：
 
 ```bash
-mkdir -p /opt/napcat/QQ
-mkdir -p /opt/napcat/config
-mkdir -p /opt/napcat/plugins
+sudo mkdir -p /opt/napcat/QQ
+sudo mkdir -p /opt/napcat/config
+sudo mkdir -p /opt/napcat/plugins
 ```
 
 启动容器（把 `你的QQ号` 改成实际值）：
 
 ```bash
+docker pull mlikiowa/napcat-docker:latest
 docker run -d \
   --name napcat \
   --restart=always \
+  --add-host=host.docker.internal:host-gateway \
   -e ACCOUNT=你的QQ号 \
   -e WSR_ENABLE=true \
   -e NAPCAT_UID=$(id -u) \
@@ -205,6 +210,22 @@ docker run -d \
   mlikiowa/napcat-docker:latest
 ```
 
+若拉取镜像时报 `connection reset by peer` / `failed to resolve reference`，先检查：
+
+```bash
+curl -I https://registry-1.docker.io/v2/
+```
+
+若你中断过拉取后出现 layer 校验/解压错误，可清理后重试：
+
+```bash
+docker rm -f napcat 2>/dev/null || true
+docker image rm -f mlikiowa/napcat-docker:latest 2>/dev/null || true
+docker builder prune -af
+docker image prune -af
+docker pull mlikiowa/napcat-docker:latest
+```
+
 查看 WebUI Token：
 
 ```bash
@@ -214,12 +235,31 @@ docker logs napcat --tail 100
 Windows 浏览器访问：
 
 ```text
-http://127.0.0.1:6099/webui
+http://localhost:6099/webui
+```
+
+若无法打开，再在 WSL 查询 IP 后访问：
+
+```bash
+hostname -I
+```
+
+```text
+http://<WSL的IP>:6099/webui
 ```
 
 ## 7. 配置 NapCat 反向 WS 到 NoneBot
 
 在 NapCat WebUI 中启用 `Reverse WebSocket`，上报地址填写：
+
+```text
+ws://host.docker.internal:8080/onebot/v11/ws
+```
+
+连接类型请选择：`WebSocket 客户端（Reverse WS）`。  
+消息格式请选择：`array`。
+
+如果 NapCat 不是 Docker 部署，而是与 NoneBot 同机直接运行，可改回：
 
 ```text
 ws://127.0.0.1:8080/onebot/v11/ws
@@ -263,6 +303,14 @@ curl -i -X POST "http://127.0.0.1:8080/ff14/bridge/ingest" -d '{}'
 
 返回 `401 invalid_key` 属于正常现象。
 
+若 NapCat 日志报 `ECONNREFUSED ... host.docker.internal:8080`，先在 WSL 检查 NoneBot 监听：
+
+```bash
+ss -lntp | grep 8080
+```
+
+应看到 `0.0.0.0:8080`（或 `*:8080`）。若不是，请确认 `.env` 中 `HOST=0.0.0.0` 后重启 NoneBot。
+
 ## 9. WSL2 注意事项（务必看）
 
 1. WSL2 是 NAT 网络，公网访问需在 Windows 做额外端口转发/防火墙放行。
@@ -278,6 +326,7 @@ curl -i -X POST "http://127.0.0.1:8080/ff14/bridge/ingest" -d '{}'
 2. NapCat WebUI 打不开：
    - 先看 `docker ps` 是否有 `0.0.0.0:6099->6099/tcp`。
 3. `ff14bot` 无响应：
-   - 检查 NapCat 是否配置为 `ws://127.0.0.1:8080/onebot/v11/ws`。
+   - Docker 部署 NapCat 时应配置为 `ws://host.docker.internal:8080/onebot/v11/ws`。
+   - 并确认 NoneBot 监听为 `0.0.0.0:8080`。
 4. 配了 Token 后连不上：
    - `ONEBOT_ACCESS_TOKEN` 两边必须完全一致。

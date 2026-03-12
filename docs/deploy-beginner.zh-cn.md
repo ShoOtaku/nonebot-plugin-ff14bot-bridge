@@ -59,21 +59,32 @@ ssh root@你的服务器IP
 
 ## 2. 安装基础依赖
 
+先确认当前是否 root（输出 `0` 表示 root）：
+
 ```bash
-apt update
-apt install -y python3 python3-venv python3-pip git curl
+id -u
+```
+
+如果不是 root（WSL2 默认是普通用户），请使用 `sudo`：
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip git curl
 ```
 
 仅当你需要“域名 + 公网 HTTPS”时，再额外安装：
 
 ```bash
-apt install -y nginx certbot python3-certbot-nginx
+sudo apt install -y nginx certbot python3-certbot-nginx
 ```
+
+如果你当前就是 root，可以把上面的 `sudo` 去掉后执行。
 
 ## 3. 创建项目目录与虚拟环境
 
 ```bash
-mkdir -p /opt/nonebot-bot
+sudo mkdir -p /opt/nonebot-bot
+sudo chown -R $USER:$USER /opt/nonebot-bot
 cd /opt/nonebot-bot
 python3 -m venv .venv
 source .venv/bin/activate
@@ -134,6 +145,12 @@ ENV
 sed -i 's#http://127.0.0.1:8080/ff14/bridge/ingest#https://你的真实域名/ff14/bridge/ingest#g' /opt/nonebot-bot/.env
 ```
 
+如果你使用 Docker 部署 NapCat（第 12 步），建议把监听地址改为：
+
+```bash
+sed -i 's/^HOST=.*/HOST=0.0.0.0/' /opt/nonebot-bot/.env
+```
+
 如果你要启用 OneBot Access Token，再追加：
 
 ```bash
@@ -153,8 +170,10 @@ python bot.py
 
 ## 8. 配置 systemd 开机自启
 
+注意：不要使用 `sudo cat > /etc/...`，重定向 `>` 仍由当前普通用户执行，会导致 `Permission denied`。请按下方 `sudo tee` 写入。
+
 ```bash
-cat > /etc/systemd/system/nonebot.service <<'UNIT'
+sudo tee /etc/systemd/system/nonebot.service > /dev/null <<'UNIT'
 [Unit]
 Description=NoneBot2 Service
 After=network.target
@@ -174,27 +193,28 @@ UNIT
 ```
 
 ```bash
-systemctl daemon-reload
-systemctl enable nonebot
-systemctl restart nonebot
-systemctl status nonebot --no-pager
+sudo systemctl daemon-reload
+sudo systemctl enable nonebot
+sudo systemctl restart nonebot
+sudo systemctl status nonebot --no-pager
 ```
 
 查看实时日志：
 
 ```bash
-journalctl -u nonebot -f
+sudo journalctl -u nonebot -f
 ```
 
 ## WSL2 说明（第 9~11 步）
 
 如果你是在本机 WSL2 调试，或无域名仅本地部署，可以先跳过第 9~11 步（Nginx/HTTPS）。  
 这时 `FF14_BRIDGE_PUBLIC_ENDPOINT` 可先用本地地址，后续需要公网时再补做 Nginx + 证书。
+如果你的 WSL 未启用 systemd（执行 `systemctl` 报错 `System has not been booted with systemd`），也先跳过第 8 步，改用前台运行或 `nohup` 临时启动。
 
 ## 9. 配置 Nginx 反向代理（仅有域名时需要）
 
 ```bash
-cat > /etc/nginx/conf.d/nonebot.conf <<'NGINX'
+sudo tee /etc/nginx/conf.d/nonebot.conf > /dev/null <<'NGINX'
 server {
     listen 80;
     server_name nb.example.com;
@@ -233,15 +253,15 @@ NGINX
 替换域名：
 
 ```bash
-sed -i 's#nb.example.com#你的真实域名#g' /etc/nginx/conf.d/nonebot.conf
+sudo sed -i 's#nb.example.com#你的真实域名#g' /etc/nginx/conf.d/nonebot.conf
 ```
 
 ## 10. 申请 HTTPS 证书并重载 Nginx（仅有域名时需要）
 
 ```bash
-certbot --nginx -d 你的真实域名
-nginx -t
-systemctl reload nginx
+sudo certbot --nginx -d 你的真实域名
+sudo nginx -t
+sudo systemctl reload nginx
 ```
 
 ## 11. 验证桥接接口是否可达
@@ -266,10 +286,10 @@ curl -i -X POST "https://你的真实域名/ff14/bridge/ingest" -d '{}'
 
 ```bash
 curl -fsSL https://get.docker.com -o get-docker.sh
-sh get-docker.sh
-systemctl enable docker
-systemctl start docker
-docker --version
+sudo sh get-docker.sh
+sudo systemctl enable docker
+sudo systemctl start docker
+sudo docker --version
 ```
 
 ## 12.2 部署 NapCat 容器
@@ -277,17 +297,72 @@ docker --version
 创建持久化目录：
 
 ```bash
-mkdir -p /opt/napcat/QQ
-mkdir -p /opt/napcat/config
-mkdir -p /opt/napcat/plugins
+sudo mkdir -p /opt/napcat/QQ
+sudo mkdir -p /opt/napcat/config
+sudo mkdir -p /opt/napcat/plugins
+```
+
+先拉取镜像（便于提前暴露网络问题）：
+
+```bash
+sudo docker pull mlikiowa/napcat-docker:latest
+```
+
+说明：首次拉取大镜像时，终端长时间停在 `Pulling fs layer` 可能只是下载慢（常见 5~20 分钟），不一定是死锁。
+
+如果这里报错 `failed to resolve reference`、`connection reset by peer` 或超时，按下面处理后再重试：
+
+```bash
+curl -I https://registry-1.docker.io/v2/
+```
+
+若返回异常（连不上 Docker Hub），为 Docker 配置镜像加速地址（把 `你的镜像加速地址` 换成你可用的地址）：
+
+```bash
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json > /dev/null <<'JSON'
+{
+  "registry-mirrors": [
+    "https://你的镜像加速地址"
+  ]
+}
+JSON
+sudo systemctl restart docker
+```
+
+然后再次执行：
+
+```bash
+sudo docker pull mlikiowa/napcat-docker:latest
+```
+
+如果长时间无进度（例如超过 10 分钟）可按 `Ctrl + C` 中断，然后依次执行：
+
+```bash
+curl -I https://registry-1.docker.io/v2/
+sudo docker info
+sudo systemctl restart docker
+sudo docker pull mlikiowa/napcat-docker:latest
+```
+
+如果你中断过下载，随后出现 layer 校验/解压相关错误（如 `filesystem layer verification failed`、`unexpected EOF`、`failed to register layer`），可先清理再重拉：
+
+```bash
+sudo docker rm -f napcat 2>/dev/null || true
+sudo docker image rm -f mlikiowa/napcat-docker:latest 2>/dev/null || true
+sudo docker builder prune -af
+sudo docker image prune -af
+sudo systemctl restart docker
+sudo docker pull mlikiowa/napcat-docker:latest
 ```
 
 启动容器（把 `你的QQ号` 改成实际值）：
 
 ```bash
-docker run -d \
+sudo docker run -d \
   --name napcat \
   --restart=always \
+  --add-host=host.docker.internal:host-gateway \
   -e ACCOUNT=你的QQ号 \
   -e WSR_ENABLE=true \
   -e NAPCAT_UID=$(id -u) \
@@ -302,7 +377,7 @@ docker run -d \
 查看日志并记录 WebUI Token：
 
 ```bash
-docker logs napcat --tail 100
+sudo docker logs napcat --tail 100
 ```
 
 打开 WebUI：
@@ -311,19 +386,51 @@ docker logs napcat --tail 100
 http://你的服务器IP:6099/webui
 ```
 
+如果你在 Windows 访问 WSL2 内的 NapCat，可先在 WSL 查询 IP：
+
+```bash
+hostname -I
+```
+
+取第一个 IPv4 访问：
+
+```text
+http://<WSL的IP>:6099/webui
+```
+
 ## 12.3 配置 NapCat 反向 WebSocket
 
 在 WebUI 的 OneBot V11 网络设置中，启用 `Reverse WebSocket`，填入：
 
 ```text
+ws://host.docker.internal:8080/onebot/v11/ws
+```
+
+连接类型请选择：`WebSocket 客户端（Reverse WS）`（不要选 WebSocket 服务器）。
+
+消息格式请选择：`array`（推荐）。
+
+说明：如果 NapCat 不是 Docker 部署，而是与 NoneBot 在同一台机器直接运行，再使用：
+
+```text
 ws://127.0.0.1:8080/onebot/v11/ws
 ```
+
+如果日志出现 `ECONNREFUSED ... host.docker.internal:8080`（或 `172.x.x.x:8080`），通常是 NoneBot 仅监听了 `127.0.0.1`。请执行：
+
+```bash
+sed -i 's/^HOST=.*/HOST=0.0.0.0/' /opt/nonebot-bot/.env
+sudo systemctl restart nonebot
+sudo ss -lntp | grep 8080
+```
+
+`ss` 输出中看到 `0.0.0.0:8080`（或 `*:8080`）后，再让 NapCat 重连。
 
 如果你配置了 Access Token，也要同步到 NoneBot：
 
 ```bash
 echo 'ONEBOT_ACCESS_TOKEN=和NapCat里一致的值' >> /opt/nonebot-bot/.env
-systemctl restart nonebot
+sudo systemctl restart nonebot
 ```
 
 ## 12.4 验证 NapCat 与 NoneBot 连通
@@ -331,8 +438,8 @@ systemctl restart nonebot
 查看双端日志：
 
 ```bash
-journalctl -u nonebot -f
-docker logs -f napcat
+sudo journalctl -u nonebot -f
+sudo docker logs -f napcat
 ```
 
 在 QQ 私聊机器人发送：
@@ -347,15 +454,15 @@ ff14bot status
 
 ## 13. 最终验收清单
 
-1. `systemctl status nonebot` 为 active。
-2. （有域名时）`nginx -t` 通过。
+1. `sudo systemctl status nonebot` 为 active。
+2. （有域名时）`sudo nginx -t` 通过。
 3. 无域名时可访问 `http://127.0.0.1:8080/ff14/bridge/ingest`；有域名时可访问 `https://你的真实域名/ff14/bridge/ingest`。
 4. QQ 私聊机器人执行 `ff14bot help` 能返回帮助。
 5. 私聊执行 `ff14bot register` 能返回 `Bridge Key / Secret / Endpoint`。
 
 ## 14. 常见问题（新手高频）
 
-1. 机器人没反应：先看 `journalctl -u nonebot -f`。
+1. 机器人没反应：先看 `sudo journalctl -u nonebot -f`。
 2. （仅 HTTPS）证书申请失败：检查域名是否解析到本机，以及 80 端口是否放行。
 3. `ff14bot register` 没返回：通常是协议端（NapCat）没连上 NoneBot。
 4. 游戏端收不到下行：优先检查 `/ff14/bridge/ws` 的 Nginx Upgrade 配置是否正确。

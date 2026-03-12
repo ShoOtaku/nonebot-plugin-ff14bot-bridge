@@ -48,7 +48,7 @@
 - 对外仅开放：
   - `80/tcp`（申请证书时可临时使用）
   - `443/tcp`
-- NoneBot 监听 `127.0.0.1:8080`（不直接公网暴露）
+- NoneBot 监听 `127.0.0.1:8080`（不直接公网暴露；若 NapCat 用 Docker 反向 WS，可改为 `0.0.0.0:8080`）
 
 无域名本地调试时，可不开放公网端口，仅本机访问 `127.0.0.1:8080`。
 
@@ -115,26 +115,28 @@ nonebot.load_plugin("nonebot_plugin_ff14bot_bridge")
 
 ```bash
 curl -fsSL https://get.docker.com -o get-docker.sh
-sh get-docker.sh
-systemctl enable docker
-systemctl start docker
-docker --version
+sudo sh get-docker.sh
+sudo systemctl enable docker
+sudo systemctl start docker
+sudo docker --version
 ```
 
 创建持久化目录：
 
 ```bash
-mkdir -p /opt/napcat/QQ
-mkdir -p /opt/napcat/config
-mkdir -p /opt/napcat/plugins
+sudo mkdir -p /opt/napcat/QQ
+sudo mkdir -p /opt/napcat/config
+sudo mkdir -p /opt/napcat/plugins
 ```
 
 启动 NapCat 容器（把 `你的QQ号` 改成实际值）：
 
 ```bash
-docker run -d \
+sudo docker pull mlikiowa/napcat-docker:latest
+sudo docker run -d \
   --name napcat \
   --restart=always \
+  --add-host=host.docker.internal:host-gateway \
   -e ACCOUNT=你的QQ号 \
   -e WSR_ENABLE=true \
   -e NAPCAT_UID=$(id -u) \
@@ -146,10 +148,26 @@ docker run -d \
   mlikiowa/napcat-docker:latest
 ```
 
+若拉取镜像时停在 `Pulling fs layer`，通常只是下载慢；若报 `connection reset by peer`，先检查：
+
+```bash
+curl -I https://registry-1.docker.io/v2/
+```
+
+若中断过下载并出现 layer 校验/解压错误（如 `filesystem layer verification failed`、`unexpected EOF`、`failed to register layer`），可清理后重拉：
+
+```bash
+sudo docker rm -f napcat 2>/dev/null || true
+sudo docker image rm -f mlikiowa/napcat-docker:latest 2>/dev/null || true
+sudo docker builder prune -af
+sudo docker image prune -af
+sudo docker pull mlikiowa/napcat-docker:latest
+```
+
 查看日志（含 WebUI Token 信息）：
 
 ```bash
-docker logs napcat --tail 100
+sudo docker logs napcat --tail 100
 ```
 
 WebUI 默认地址：
@@ -158,18 +176,30 @@ WebUI 默认地址：
 http://你的服务器IP:6099/webui
 ```
 
+若在 Windows 访问 WSL2 内 NapCat，可先在 WSL 查询 IP：
+
+```bash
+hostname -I
+```
+
+然后访问 `http://<WSL的IP>:6099/webui`。
+
 ## 6.2 配置 NapCat 反向 WebSocket
 
 在 NapCat WebUI 中，找到 OneBot V11 网络配置并启用 `Reverse WebSocket`，上报地址填写：
 
 ```text
-ws://127.0.0.1:8080/onebot/v11/ws
+ws://host.docker.internal:8080/onebot/v11/ws
 ```
 
-可选地址（官方文档同样支持）：
+连接类型请选择：`WebSocket 客户端（Reverse WS）`。  
+消息格式请选择：`array`。
+
+如果 NapCat 不是 Docker 部署，而是与 NoneBot 同机运行，可使用：
 
 - `ws://127.0.0.1:8080/onebot/v11/`
 - `ws://127.0.0.1:8080/onebot/v11/ws/`
+- `ws://127.0.0.1:8080/onebot/v11/ws`
 
 如果你在 NapCat 里启用了 Access Token，请在 NoneBot `.env` 同步：
 
@@ -188,8 +218,8 @@ ONEBOT_ACCESS_TOKEN=和NapCat里一致的值
 常用检查命令：
 
 ```bash
-journalctl -u nonebot -f
-docker logs -f napcat
+sudo journalctl -u nonebot -f
+sudo docker logs -f napcat
 ```
 
 建议先完成“机器人可正常聊天回复”，再继续桥接部署。
@@ -217,6 +247,12 @@ FF14_BRIDGE_WS_ENABLED=true
 
 ```env
 FF14_BRIDGE_PUBLIC_ENDPOINT=https://你的真实域名/ff14/bridge/ingest
+```
+
+如果 NapCat 使用 Docker 反向 WS，建议在 `.env` 中设置：
+
+```env
+HOST=0.0.0.0
 ```
 
 参数说明（与代码一致）：
@@ -426,6 +462,19 @@ certbot --nginx -d nb.example.com
 - `FF14_BRIDGE_ENABLED=false`
 - OneBot 机器人不在线或无发消息权限
 - 目标会话 ID 无效
+
+## 12.6 NapCat 反向 WS 报 `ECONNREFUSED ... host.docker.internal:8080`
+
+- NoneBot 仅监听了 `127.0.0.1`
+- NapCat（Docker）应使用 `ws://host.docker.internal:8080/onebot/v11/ws`
+
+可执行：
+
+```bash
+sed -i 's/^HOST=.*/HOST=0.0.0.0/' .env
+sudo systemctl restart nonebot
+sudo ss -lntp | grep 8080
+```
 
 ## 13. 安全与备份建议
 
